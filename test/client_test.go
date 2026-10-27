@@ -2,6 +2,7 @@ package test
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,5 +165,89 @@ func TestClientContext(t *testing.T) {
 	}
 	if val != 42 {
 		t.Errorf("Expected context value 42, got %v", val)
+	}
+}
+
+// TestConnectionLimitsArePerMessage tests that ReadTimeout and MaxMessageSize bound each message,
+// not the connection: an idle connection outlives ReadTimeout, and messages may add up to more than
+// MaxMessageSize.
+func TestConnectionLimitsArePerMessage(t *testing.T) {
+	socketPath := "/tmp/conduit_limits_test.sock"
+	defer os.RemoveAll(socketPath)
+
+	serverCfg := conduit.DefaultServerConfig(socketPath)
+	serverCfg.Logger = conduit.NewLogger(conduit.LogError, nil)
+	serverCfg.ReadTimeout = 100 * time.Millisecond
+	serverCfg.MaxMessageSize = 16 * 1024
+	srv := server.NewServer(serverCfg)
+
+	srv.Handle("echo", func(conn *server.Connection, msg *conduit.Message) error {
+		var payload string
+		if err := msg.UnmarshalPayload(&payload); err != nil {
+			return err
+		}
+		return conn.Send("echo_response", payload)
+	})
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer srv.Stop()
+
+	clientCfg := conduit.DefaultClientConfig(socketPath)
+	clientCfg.Logger = conduit.NewLogger(conduit.LogError, nil)
+	clientCfg.ReadTimeout = 100 * time.Millisecond
+	clientCfg.MaxMessageSize = 16 * 1024
+	clientCfg.Reconnect = false // a dropped connection must fail the test, not be reconnected
+	c := client.NewClient(clientCfg)
+
+	received := make(chan string, 1)
+	c.Handle("echo_response", func(_ *client.Client, msg *conduit.Message) error {
+		var resp string
+		if err := msg.UnmarshalPayload(&resp); err != nil {
+			return err
+		}
+		received <- resp
+		return nil
+	})
+
+	if err := c.Connect(); err != nil {
+		t.Fatalf("Client failed to connect: %v", err)
+	}
+	defer c.Close()
+
+	// Stay idle for several ReadTimeouts
+	time.Sleep(300 * time.Millisecond)
+
+	// ~23KB of small messages, then one several times the decoder's read buffer so it
+	// arrives over several reads, but still under MaxMessageSize
+	var payloads []string
+	for i := 0; i < 100; i++ {
+		payloads = append(payloads, strings.Repeat("x", 200))
+	}
+	payloads = append(payloads, strings.Repeat("y", 15000))
+
+	for i, payload := range payloads {
+		if err := c.Send("echo", payload); err != nil {
+			t.Fatalf("Failed to send message %d: %v", i, err)
+		}
+		select {
+		case resp := <-received:
+			if resp != payload {
+				t.Fatalf("Unexpected response to message %d", i)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("Timeout waiting for response to message %d", i)
+		}
+	}
+
+	// A message over MaxMessageSize must still be rejected
+	if err := c.Send("echo", strings.Repeat("z", 20000)); err != nil {
+		t.Fatalf("Failed to send oversized message: %v", err)
+	}
+	select {
+	case <-received:
+		t.Error("Message over MaxMessageSize was accepted")
+	case <-time.After(300 * time.Millisecond):
 	}
 }

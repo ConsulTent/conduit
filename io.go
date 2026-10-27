@@ -6,7 +6,7 @@ import (
 )
 
 // LimitedReader is an io.Reader that enforces a maximum read limit.
-// If more than 'limit' bytes are read, it returns an error.
+// It never reads past 'limit' bytes; further reads return an error until Reset is called.
 //
 // This is useful for preventing large malicious payloads from consuming too much memory.
 type LimitedReader struct {
@@ -24,13 +24,22 @@ func NewLimitedReader(r io.Reader, limit int64) *LimitedReader {
 	}
 }
 
-// Read reads up to len(p) bytes into p from the underlying reader.
-// If reading would exceed the limit, it returns an error.
+// Read reads up to len(p) bytes into p from the underlying reader, never past the limit.
+// Once the limit has been consumed, it returns 0 bytes and an error.
 func (l *LimitedReader) Read(p []byte) (n int, err error) {
+	remaining := l.limit - l.consumed
+	if remaining <= 0 {
+		return 0, fmt.Errorf("message size exceeds limit of %d bytes", l.limit)
+	}
+	if int64(len(p)) > remaining {
+		p = p[:remaining]
+	}
 	n, err = l.r.Read(p)
 	l.consumed += int64(n)
-	if l.consumed > l.limit {
-		return n, fmt.Errorf("message size exceeds limit of %d bytes", l.limit)
-	}
 	return n, err
+}
+
+// Reset clears the consumed byte count so the limit applies afresh, e.g. to the next message.
+func (l *LimitedReader) Reset() {
+	l.consumed = 0
 }
