@@ -6,7 +6,7 @@ import (
 )
 
 // LimitedReader is an io.Reader that enforces a maximum read limit.
-// It never reads past 'limit' bytes; further reads return an error until Reset is called.
+// It never reads past 'limit' bytes. After that, Read returns an error until Reset.
 //
 // This is useful for preventing large malicious payloads from consuming too much memory.
 type LimitedReader struct {
@@ -24,8 +24,8 @@ func NewLimitedReader(r io.Reader, limit int64) *LimitedReader {
 	}
 }
 
-// Read reads up to len(p) bytes into p from the underlying reader, never past the limit.
-// Once the limit has been consumed, it returns 0 bytes and an error.
+// Read reads into p, stopping at the limit. Past the limit it returns 0 bytes and an error.
+// Never return data together with the error: the jsonv2-backed decoder ignores those errors.
 func (l *LimitedReader) Read(p []byte) (n int, err error) {
 	remaining := l.limit - l.consumed
 	if remaining <= 0 {
@@ -39,7 +39,7 @@ func (l *LimitedReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// Reset clears the consumed byte count so the limit applies afresh, e.g. to the next message.
+// Reset restarts the limit. Call it before each message.
 func (l *LimitedReader) Reset() {
 	l.consumed = 0
 }
