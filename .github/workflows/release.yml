@@ -27,7 +27,7 @@ jobs:
         run: GOEXPERIMENT=nojsonv2 go test -v ./...
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.version }}
           name: Release ${{ inputs.version }}
