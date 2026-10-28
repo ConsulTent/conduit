@@ -168,9 +168,11 @@ func TestClientContext(t *testing.T) {
 	}
 }
 
-// TestConnectionLimitsArePerMessage tests that ReadTimeout and MaxMessageSize bound each message,
-// not the connection: an idle connection outlives ReadTimeout, and messages may add up to more than
-// MaxMessageSize.
+// TestConnectionLimitsArePerMessage checks that ReadTimeout and MaxMessageSize apply per message:
+//  1. An idle connection outlives ReadTimeout.
+//  2. Messages may add up to more than MaxMessageSize.
+//  3. A message too big for one decoder read, but under the limit, gets through.
+//  4. A message over MaxMessageSize is rejected.
 func TestConnectionLimitsArePerMessage(t *testing.T) {
 	socketPath := "/tmp/conduit_limits_test.sock"
 	defer os.RemoveAll(socketPath)
@@ -216,11 +218,10 @@ func TestConnectionLimitsArePerMessage(t *testing.T) {
 	}
 	defer c.Close()
 
-	// Stay idle for several ReadTimeouts
+	// 1. Idle for 3x ReadTimeout
 	time.Sleep(300 * time.Millisecond)
 
-	// ~23KB of small messages, then one several times the decoder's read buffer so it
-	// arrives over several reads, but still under MaxMessageSize
+	// 2. ~23KB of small messages. 3. One 15KB message that needs several reads.
 	var payloads []string
 	for i := 0; i < 100; i++ {
 		payloads = append(payloads, strings.Repeat("x", 200))
@@ -241,7 +242,7 @@ func TestConnectionLimitsArePerMessage(t *testing.T) {
 		}
 	}
 
-	// A message over MaxMessageSize must still be rejected
+	// 4. Over MaxMessageSize: must be rejected
 	if err := c.Send("echo", strings.Repeat("z", 20000)); err != nil {
 		t.Fatalf("Failed to send oversized message: %v", err)
 	}

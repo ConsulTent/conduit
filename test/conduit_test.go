@@ -54,7 +54,7 @@ func TestMessageSizeLimit(t *testing.T) {
 	if n, _ := reader.Read(data); n != 15 {
 		t.Errorf("Expected read to stop at the 15 byte limit, got %d bytes", n)
 	}
-	// No bytes alongside the error: decoders may ignore errors returned with data.
+	// Must be 0 bytes with the error. jsonv2 ignores errors that come with data.
 	if n, err := reader.Read(data); n != 0 || err == nil {
 		t.Errorf("Expected 0 bytes and an error past the limit, got %d bytes, err %v", n, err)
 	}

@@ -167,9 +167,11 @@ func (c *Client) handleMessages(conn net.Conn) {
 		case <-c.done:
 			return
 		default:
-			// Limits apply per message. More blocks, with no deadline, until the next message
-			// starts, so idle connections stay open; ReadTimeout then bounds reading the rest.
-			// A read error from More resurfaces from Decode.
+			// Per-message limits:
+			//  1. Reset the MaxMessageSize budget.
+			//  2. Block in More, with no deadline, until a message starts (idle conns stay open).
+			//  3. Give the rest of the message ReadTimeout.
+			// If More fails, Decode returns the same error.
 			limited.Reset()
 			conn.SetReadDeadline(time.Time{})
 			decoder.More()
